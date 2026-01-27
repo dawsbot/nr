@@ -9,11 +9,11 @@ A zero-overhead npm script runner written in Rust. No Node.js startup, no npm ov
 <!-- BENCHMARK_START -->
 | Runner | Time | Speedup |
 |--------|------|---------|
-| nr | 10ms | **25.6x** |
-| bun | 11ms | 23.3x |
-| npm | 126ms | 2.0x |
-| yarn | 133ms | 1.9x |
-| pnpm | 256ms | 1.0x |
+| nr | 10ms | **26.3x** |
+| bun | 10ms | 26.3x |
+| npm | 123ms | 2.1x |
+| yarn | 142ms | 1.9x |
+| pnpm | 263ms | 1.0x |
 
 *Measured running `echo test` on macOS 26.2 (Apple Silicon). Your mileage may vary.*
 <!-- BENCHMARK_END -->
