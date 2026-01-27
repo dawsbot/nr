@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{exit, Command};
@@ -26,45 +27,6 @@ fn find_package_json() -> Option<PathBuf> {
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
-    if args.is_empty() {
-        // List available scripts
-        let pkg_path = match find_package_json() {
-            Some(p) => p,
-            None => {
-                eprintln!("No package.json found");
-                exit(1);
-            }
-        };
-
-        let content = fs::read_to_string(&pkg_path).unwrap_or_else(|e| {
-            eprintln!("Failed to read package.json: {e}");
-            exit(1);
-        });
-
-        let pkg: PackageJson = serde_json::from_str(&content).unwrap_or_else(|e| {
-            eprintln!("Failed to parse package.json: {e}");
-            exit(1);
-        });
-
-        match pkg.scripts {
-            Some(scripts) if !scripts.is_empty() => {
-                println!("Scripts available via `nr <name>`:\n");
-                let mut entries: Vec<_> = scripts.iter().collect();
-                entries.sort_by_key(|(k, _)| *k);
-                for (name, cmd) in entries {
-                    // Bold cyan for name, dim for command
-                    println!("  \x1b[1;36m{name}\x1b[0m");
-                    println!("    \x1b[2m{cmd}\x1b[0m\n");
-                }
-            }
-            _ => println!("No scripts defined"),
-        }
-        return;
-    }
-
-    let script_name = &args[0];
-    let extra_args = &args[1..];
-
     let pkg_path = match find_package_json() {
         Some(p) => p,
         None => {
@@ -88,10 +50,25 @@ fn main() {
     let scripts = match pkg.scripts {
         Some(s) => s,
         None => {
-            eprintln!("No scripts defined in package.json");
+            eprintln!("No scripts defined");
             exit(1);
         }
     };
+
+    // No args: list available scripts
+    if args.is_empty() {
+        println!("Scripts available via `nr <name>`:\n");
+        let mut entries: Vec<_> = scripts.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        for (name, cmd) in entries {
+            println!("  \x1b[1;36m{name}\x1b[0m");
+            println!("    \x1b[2m{cmd}\x1b[0m\n");
+        }
+        return;
+    }
+
+    let script_name = &args[0];
+    let extra_args = &args[1..];
 
     let script_cmd = match scripts.get(script_name) {
         Some(cmd) => cmd,
@@ -102,28 +79,42 @@ fn main() {
         }
     };
 
-    // Append extra arguments to the command
     let full_cmd = if extra_args.is_empty() {
         script_cmd.clone()
     } else {
         format!("{} {}", script_cmd, extra_args.join(" "))
     };
 
-    // Print the command being run (like bun)
-    println!("\x1b[2m$\x1b[0m {}", script_cmd);
-
-    // Build PATH with node_modules/.bin prepended
-    let bin_dir = pkg_dir.join("node_modules/.bin");
-    let path = match env::var_os("PATH") {
-        Some(p) => {
-            let mut paths = env::split_paths(&p).collect::<Vec<_>>();
-            paths.insert(0, bin_dir);
-            env::join_paths(paths).unwrap()
+    // Build PATH with all node_modules/.bin directories (walk up for monorepos)
+    let mut bin_paths: Vec<PathBuf> = Vec::new();
+    let mut search_dir = pkg_dir.to_path_buf();
+    loop {
+        let bin_dir = search_dir.join("node_modules/.bin");
+        if bin_dir.is_dir() {
+            bin_paths.push(bin_dir);
         }
-        None => bin_dir.into_os_string(),
+        if !search_dir.pop() {
+            break;
+        }
+    }
+
+    let path: OsString = if bin_paths.is_empty() {
+        env::var_os("PATH").unwrap_or_default()
+    } else {
+        let mut new_path = OsString::new();
+        for (i, bin_path) in bin_paths.iter().enumerate() {
+            if i > 0 {
+                new_path.push(":");
+            }
+            new_path.push(bin_path);
+        }
+        if let Some(existing) = env::var_os("PATH") {
+            new_path.push(":");
+            new_path.push(&existing);
+        }
+        new_path
     };
 
-    // On Unix, use exec to replace the process (fastest)
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -137,7 +128,6 @@ fn main() {
         exit(1);
     }
 
-    // On Windows, spawn and wait
     #[cfg(windows)]
     {
         let status = Command::new("cmd")
@@ -146,7 +136,7 @@ fn main() {
             .env("PATH", path)
             .status()
             .unwrap_or_else(|e| {
-                eprintln!("Failed to run command: {e}");
+                eprintln!("Failed to run: {e}");
                 exit(1);
             });
         exit(status.code().unwrap_or(1));

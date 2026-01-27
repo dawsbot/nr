@@ -7,7 +7,7 @@ const os = require("os");
 
 const ROOT = path.join(__dirname, "..");
 const README = path.join(ROOT, "README.md");
-const ITERATIONS = 5;
+const ITERATIONS = 10;
 
 // Detect system info
 function getSystemInfo() {
@@ -15,7 +15,9 @@ function getSystemInfo() {
   const arch = os.arch();
 
   if (platform === "darwin") {
-    const version = execSync("sw_vers -productVersion", { encoding: "utf8" }).trim();
+    const version = execSync("sw_vers -productVersion", {
+      encoding: "utf8",
+    }).trim();
     const chip = arch === "arm64" ? "Apple Silicon" : "Intel";
     return `macOS ${version} (${chip})`;
   } else if (platform === "linux") {
@@ -44,6 +46,51 @@ function hasCommand(cmd) {
   }
 }
 
+// Get install size for a runner
+function getInstallSize(runner) {
+  try {
+    if (runner === "nr") {
+      const nrPath = path.join(ROOT, "target", "release", process.platform === "win32" ? "nr.exe" : "nr");
+      if (fs.existsSync(nrPath)) {
+        const stats = fs.statSync(nrPath);
+        return stats.size;
+      }
+    } else if (runner === "bun") {
+      const bunPath = execSync("which bun", { encoding: "utf8" }).trim();
+      const stats = fs.statSync(bunPath);
+      return stats.size;
+    } else if (runner === "npm") {
+      const npmPath = execSync("which npm", { encoding: "utf8" }).trim();
+      const npmDir = path.join(path.dirname(npmPath), "..", "lib", "node_modules", "npm");
+      const size = execSync(`du -sb "${npmDir}" 2>/dev/null || du -sk "${npmDir}" | awk '{print $1 * 1024}'`, { encoding: "utf8" }).trim();
+      return parseInt(size.split(/\s+/)[0], 10);
+    } else if (runner === "yarn") {
+      const yarnPath = execSync("which yarn", { encoding: "utf8" }).trim();
+      const yarnDir = path.join(path.dirname(yarnPath), "..", "lib", "node_modules", "yarn");
+      const size = execSync(`du -sb "${yarnDir}" 2>/dev/null || du -sk "${yarnDir}" | awk '{print $1 * 1024}'`, { encoding: "utf8" }).trim();
+      return parseInt(size.split(/\s+/)[0], 10);
+    } else if (runner === "pnpm") {
+      const pnpmPath = execSync("which pnpm", { encoding: "utf8" }).trim();
+      const realPath = execSync(`realpath "${pnpmPath}"`, { encoding: "utf8" }).trim();
+      const pnpmDir = path.join(path.dirname(realPath), "..");
+      const size = execSync(`du -sb "${pnpmDir}" 2>/dev/null || du -sk "${pnpmDir}" | awk '{print $1 * 1024}'`, { encoding: "utf8" }).trim();
+      return parseInt(size.split(/\s+/)[0], 10);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// Format bytes to human readable
+function formatSize(bytes) {
+  if (bytes === null) return "N/A";
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)}KB`;
+  }
+  return `${Math.round(bytes / (1024 * 1024))}MB`;
+}
+
 // Benchmark a command
 function benchmark(cmd) {
   const times = [];
@@ -60,9 +107,10 @@ function benchmark(cmd) {
   // Return average, excluding outliers
   times.sort((a, b) => a - b);
   const trimmed = times.slice(1, -1); // Remove fastest and slowest
-  const avg = trimmed.length > 0
-    ? trimmed.reduce((a, b) => a + b, 0) / trimmed.length
-    : times.reduce((a, b) => a + b, 0) / times.length;
+  const avg =
+    trimmed.length > 0
+      ? trimmed.reduce((a, b) => a + b, 0) / trimmed.length
+      : times.reduce((a, b) => a + b, 0) / times.length;
 
   return Math.round(avg);
 }
@@ -72,7 +120,12 @@ console.log(`System: ${getSystemInfo()}`);
 console.log(`Iterations per runner: ${ITERATIONS}\n`);
 
 // Ensure nr is built
-const nrBinary = path.join(ROOT, "target", "release", process.platform === "win32" ? "nr.exe" : "nr");
+const nrBinary = path.join(
+  ROOT,
+  "target",
+  "release",
+  process.platform === "win32" ? "nr.exe" : "nr",
+);
 if (!fs.existsSync(nrBinary)) {
   console.log("Building nr...");
   execSync("cargo build --release", { cwd: ROOT, stdio: "inherit" });
@@ -84,39 +137,44 @@ const results = [];
 // nr
 process.stdout.write("  nr: ");
 const nrTime = benchmark(`"${nrBinary}" test`);
-console.log(`${nrTime}ms`);
-results.push({ runner: "nr", time: nrTime });
+const nrSize = getInstallSize("nr");
+console.log(`${nrTime}ms (${formatSize(nrSize)})`);
+results.push({ runner: "nr", time: nrTime, size: nrSize });
 
 // npm
 if (hasCommand("npm")) {
   process.stdout.write("  npm: ");
   const npmTime = benchmark("npm run test --silent");
-  console.log(`${npmTime}ms`);
-  results.push({ runner: "npm", time: npmTime });
+  const npmSize = getInstallSize("npm");
+  console.log(`${npmTime}ms (${formatSize(npmSize)})`);
+  results.push({ runner: "npm", time: npmTime, size: npmSize });
 }
 
 // bun
 if (hasCommand("bun")) {
   process.stdout.write("  bun: ");
   const bunTime = benchmark("bun run --silent test");
-  console.log(`${bunTime}ms`);
-  results.push({ runner: "bun", time: bunTime });
+  const bunSize = getInstallSize("bun");
+  console.log(`${bunTime}ms (${formatSize(bunSize)})`);
+  results.push({ runner: "bun", time: bunTime, size: bunSize });
 }
 
 // yarn
 if (hasCommand("yarn")) {
   process.stdout.write("  yarn: ");
   const yarnTime = benchmark("yarn --silent test");
-  console.log(`${yarnTime}ms`);
-  results.push({ runner: "yarn", time: yarnTime });
+  const yarnSize = getInstallSize("yarn");
+  console.log(`${yarnTime}ms (${formatSize(yarnSize)})`);
+  results.push({ runner: "yarn", time: yarnTime, size: yarnSize });
 }
 
 // pnpm
 if (hasCommand("pnpm")) {
   process.stdout.write("  pnpm: ");
   const pnpmTime = benchmark("pnpm run --silent test");
-  console.log(`${pnpmTime}ms`);
-  results.push({ runner: "pnpm", time: pnpmTime });
+  const pnpmSize = getInstallSize("pnpm");
+  console.log(`${pnpmTime}ms (${formatSize(pnpmSize)})`);
+  results.push({ runner: "pnpm", time: pnpmTime, size: pnpmSize });
 }
 
 console.log("");
@@ -130,15 +188,15 @@ const nrResult = results.find((r) => r.runner === "nr");
 const fastestSpeedup = nrResult ? Math.round(baseline / nrResult.time) : 1;
 
 // Generate table
-const tableRows = results.map(({ runner, time }) => {
+const tableRows = results.map(({ runner, time, size }) => {
   const speedup = (baseline / time).toFixed(1);
   const speedupStr = runner === "nr" ? `**${speedup}x**` : `${speedup}x`;
-  return `| ${runner} | ${time}ms | ${speedupStr} |`;
+  return `| ${runner} | ${time}ms | ${speedupStr} | ${formatSize(size)} |`;
 });
 
 const benchmarkContent = `<!-- BENCHMARK_START -->
-| Runner | Time | Speedup |
-|--------|------|---------|
+| Runner | Time | Speedup | Size |
+|--------|------|---------|------|
 ${tableRows.join("\n")}
 
 *Measured running \`echo test\` on ${getSystemInfo()}. Your mileage may vary.*
@@ -174,4 +232,6 @@ if (speedupStartIdx !== -1 && speedupEndIdx !== -1) {
 
 fs.writeFileSync(README, readme);
 
-console.log(`Updated ${README} with benchmark results (${fastestSpeedup}x speedup)`);
+console.log(
+  `Updated ${README} with benchmark results (${fastestSpeedup}x speedup)`,
+);

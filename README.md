@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="nr logo" width="200">
+</p>
+
 # nr
 
 Run npm scripts. <!-- FASTEST_SPEEDUP_START -->26<!-- FASTEST_SPEEDUP_END -->x faster.
@@ -7,40 +11,24 @@ A zero-overhead npm script runner written in Rust. No Node.js startup, no npm ov
 ## Benchmarks
 
 <!-- BENCHMARK_START -->
-| Runner | Time | Speedup |
-|--------|------|---------|
-| nr | 10ms | **25.6x** |
-| bun | 11ms | 23.3x |
-| npm | 126ms | 2.0x |
-| yarn | 133ms | 1.9x |
-| pnpm | 256ms | 1.0x |
+| Runner | Time | Speedup | Size |
+|--------|------|---------|------|
+| nr | 10ms | **25.6x** | 377KB |
+| bun | 11ms | 23.3x | 55MB |
+| npm | 125ms | 2.0x | 18MB |
+| yarn | 133ms | 1.9x | 5MB |
+| pnpm | 256ms | 1.0x | 19MB |
 
 *Measured running `echo test` on macOS 26.2 (Apple Silicon). Your mileage may vary.*
 <!-- BENCHMARK_END -->
 
 ## Install
 
-### Homebrew (macOS/Linux)
-
 ```bash
-brew install dawsbot/tap/nr
+curl -fsSL https://raw.githubusercontent.com/dawsbot/nr/main/install.sh | sh
 ```
 
-### Cargo (cross-platform)
-
-```bash
-cargo install nr-run
-```
-
-### Shell (macOS/Linux)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/dawsbot/nr/main/install.sh | bash
-```
-
-### Manual
-
-Download the latest binary from [Releases](https://github.com/dawsbot/nr/releases), extract, and add to your PATH.
+Works on macOS, Linux, and Windows (via Git Bash/WSL).
 
 ## Usage
 
@@ -70,9 +58,7 @@ nr test -- --watch
 `nr` is intentionally minimal:
 
 - No `pre`/`post` lifecycle scripts (use `nr pretest && nr test` if needed)
-- No `node_modules/.bin` PATH injection (your script should reference binaries explicitly or use npx)
 - No workspaces support
-- No colorized npm-style banners
 
 If you need these features, use npm. If you want speed, use `nr`.
 
@@ -92,3 +78,14 @@ Experimental. Works on my machine. Report issues at [GitHub](https://github.com/
 ## License
 
 MIT
+
+<!--
+## Release
+
+```bash
+git add .
+git commit -m "Initial release"
+git tag v0.1.0
+git push origin main --tags
+```
+-->
