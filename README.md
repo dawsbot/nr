@@ -43,6 +43,58 @@ nr build
 nr test -- --watch
 ```
 
+## AI Assistant Setup
+
+Make your AI coding assistant use `nr` instead of `npm run` by adding this instruction to its config:
+
+```
+Use `nr` instead of `npm run` for running package.json scripts. It's a faster drop-in replacement.
+```
+
+### Claude Code
+
+Add to `~/.claude/CLAUDE.md` (global) or `CLAUDE.md` in your project root:
+
+```markdown
+Use `nr` instead of `npm run` for running package.json scripts.
+```
+
+### Cursor
+
+Add to `.cursorrules` in your project root:
+
+```
+Use `nr` instead of `npm run` for running package.json scripts.
+```
+
+### GitHub Copilot
+
+Add to `.github/copilot-instructions.md` in your repo:
+
+```markdown
+Use `nr` instead of `npm run` for running package.json scripts.
+```
+
+### Windsurf
+
+Add to `.windsurfrules` in your project root:
+
+```
+Use `nr` instead of `npm run` for running package.json scripts.
+```
+
+### Zed
+
+Add to `.zed/settings.json` in your project:
+
+```json
+{
+  "assistant": {
+    "instructions": "Use `nr` instead of `npm run` for running package.json scripts."
+  }
+}
+```
+
 ## Why is it faster?
 
 **No Node.js startup.** npm, yarn, and pnpm all bootstrap Node.js before doing anything. That's 50-100ms before your script even starts. `nr` is a native binary—it starts instantly.
