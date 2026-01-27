@@ -7,7 +7,7 @@ const os = require("os");
 
 const ROOT = path.join(__dirname, "..");
 const README = path.join(ROOT, "README.md");
-const ITERATIONS = 5;
+const ITERATIONS = 50;
 
 // Detect system info
 function getSystemInfo() {
@@ -15,7 +15,9 @@ function getSystemInfo() {
   const arch = os.arch();
 
   if (platform === "darwin") {
-    const version = execSync("sw_vers -productVersion", { encoding: "utf8" }).trim();
+    const version = execSync("sw_vers -productVersion", {
+      encoding: "utf8",
+    }).trim();
     const chip = arch === "arm64" ? "Apple Silicon" : "Intel";
     return `macOS ${version} (${chip})`;
   } else if (platform === "linux") {
@@ -60,9 +62,10 @@ function benchmark(cmd) {
   // Return average, excluding outliers
   times.sort((a, b) => a - b);
   const trimmed = times.slice(1, -1); // Remove fastest and slowest
-  const avg = trimmed.length > 0
-    ? trimmed.reduce((a, b) => a + b, 0) / trimmed.length
-    : times.reduce((a, b) => a + b, 0) / times.length;
+  const avg =
+    trimmed.length > 0
+      ? trimmed.reduce((a, b) => a + b, 0) / trimmed.length
+      : times.reduce((a, b) => a + b, 0) / times.length;
 
   return Math.round(avg);
 }
@@ -72,7 +75,12 @@ console.log(`System: ${getSystemInfo()}`);
 console.log(`Iterations per runner: ${ITERATIONS}\n`);
 
 // Ensure nr is built
-const nrBinary = path.join(ROOT, "target", "release", process.platform === "win32" ? "nr.exe" : "nr");
+const nrBinary = path.join(
+  ROOT,
+  "target",
+  "release",
+  process.platform === "win32" ? "nr.exe" : "nr",
+);
 if (!fs.existsSync(nrBinary)) {
   console.log("Building nr...");
   execSync("cargo build --release", { cwd: ROOT, stdio: "inherit" });
@@ -174,4 +182,6 @@ if (speedupStartIdx !== -1 && speedupEndIdx !== -1) {
 
 fs.writeFileSync(README, readme);
 
-console.log(`Updated ${README} with benchmark results (${fastestSpeedup}x speedup)`);
+console.log(
+  `Updated ${README} with benchmark results (${fastestSpeedup}x speedup)`,
+);
