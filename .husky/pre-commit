@@ -1,0 +1,2 @@
+node scripts/benchmark.js
+git add README.md
