@@ -7,7 +7,7 @@ const os = require("os");
 
 const ROOT = path.join(__dirname, "..");
 const README = path.join(ROOT, "README.md");
-const ITERATIONS = 50;
+const ITERATIONS = 10;
 
 // Detect system info
 function getSystemInfo() {
