@@ -4,7 +4,7 @@
 
 # nr
 
-Run npm scripts. <!-- FASTEST_SPEEDUP_START -->26<!-- FASTEST_SPEEDUP_END -->x faster.
+Run npm scripts. <!-- FASTEST_SPEEDUP_START -->28<!-- FASTEST_SPEEDUP_END -->x faster.
 
 A zero-overhead npm script runner written in Rust. No Node.js startup, no npm overhead—just your script.
 
@@ -13,11 +13,12 @@ A zero-overhead npm script runner written in Rust. No Node.js startup, no npm ov
 <!-- BENCHMARK_START -->
 | Runner | Time | Speedup | Size |
 |--------|------|---------|------|
-| nr | 10ms | **25.6x** | 377KB |
-| bun | 11ms | 23.3x | 55MB |
-| npm | 125ms | 2.0x | 18MB |
-| yarn | 133ms | 1.9x | 5MB |
-| pnpm | 256ms | 1.0x | 19MB |
+| nr | 10ms | **27.8x** | 377KB |
+| bun | 12ms | 23.2x | 55MB |
+| node --run | 24ms | 11.6x | N/A |
+| npm | 139ms | 2.0x | 18MB |
+| yarn | 170ms | 1.6x | 5MB |
+| pnpm | 278ms | 1.0x | 19MB |
 
 *Measured running `echo test` on macOS 26.2 (Apple Silicon). Your mileage may vary.*
 <!-- BENCHMARK_END -->

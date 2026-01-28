@@ -150,6 +150,15 @@ if (hasCommand("npm")) {
   results.push({ runner: "npm", time: npmTime, size: npmSize });
 }
 
+// node --run (Node 22+)
+const nodeVersion = parseInt(process.version.slice(1).split(".")[0], 10);
+if (nodeVersion >= 22) {
+  process.stdout.write("  node --run: ");
+  const nodeRunTime = benchmark("node --run test");
+  console.log(`${nodeRunTime}ms (N/A)`);
+  results.push({ runner: "node --run", time: nodeRunTime, size: null });
+}
+
 // bun
 if (hasCommand("bun")) {
   process.stdout.write("  bun: ");
