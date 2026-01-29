@@ -22,9 +22,10 @@ pub fn list_script_names_detailed() {
         let mut entries: Vec<(&String, &String)> = scripts.iter().collect();
         entries.sort_by_key(|(k, _)| *k);
         for (name, cmd) in entries {
-            // Escape colons in the command since zsh uses : as delimiter
+            // Escape colons since zsh uses : as the name:description delimiter
+            let escaped_name = name.replace(':', "\\:");
             let escaped_cmd = cmd.replace(':', "\\:");
-            println!("{name}:{escaped_cmd}");
+            println!("{escaped_name}:{escaped_cmd}");
         }
     }
 }
@@ -60,6 +61,8 @@ fn generate_bash() -> String {
     r#"_nr_completions() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     if [ "$COMP_CWORD" -eq 1 ]; then
+        # Remove colon from WORDBREAKS so scripts like "test:nr" complete correctly
+        COMP_WORDBREAKS="${COMP_WORDBREAKS//:}"
         local scripts
         scripts="$(nr --list-scripts 2>/dev/null)"
         COMPREPLY=($(compgen -W "$scripts" -- "$cur"))
