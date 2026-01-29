@@ -4,13 +4,27 @@ use std::fs;
 use crate::PackageJson;
 
 /// Print script names from the nearest package.json (one per line).
-/// Used by shell completion scripts to dynamically complete script names.
+/// Used by bash completion scripts to dynamically complete script names.
 pub fn list_script_names() {
     if let Some(scripts) = get_scripts() {
         let mut names: Vec<&String> = scripts.keys().collect();
         names.sort();
         for name in names {
             println!("{name}");
+        }
+    }
+}
+
+/// Print script names with their commands in `name:command` format (one per line).
+/// Used by zsh and fish completion scripts to show descriptions alongside completions.
+pub fn list_script_names_detailed() {
+    if let Some(scripts) = get_scripts() {
+        let mut entries: Vec<(&String, &String)> = scripts.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        for (name, cmd) in entries {
+            // Escape colons in the command since zsh uses : as delimiter
+            let escaped_cmd = cmd.replace(':', "\\:");
+            println!("{name}:{escaped_cmd}");
         }
     }
 }
@@ -60,7 +74,7 @@ fn generate_zsh() -> String {
 
 _nr() {
     local -a scripts
-    scripts=(${(f)"$(nr --list-scripts 2>/dev/null)"})
+    scripts=(${(f)"$(nr --list-scripts-detailed 2>/dev/null)"})
     if (( CURRENT == 2 )); then
         _describe 'script' scripts
     fi
@@ -72,6 +86,6 @@ _nr "$@""#
 
 fn generate_fish() -> String {
     r#"complete -c nr -f
-complete -c nr -n '__fish_use_subcommand' -a '(nr --list-scripts 2>/dev/null)' -d 'npm script'"#
+complete -c nr -n '__fish_use_subcommand' -a '(nr --list-scripts-detailed 2>/dev/null | while read -l line; set -l parts (string split -m1 ":" -- $line); echo $parts[1]\t$parts[2]; end)'"#
         .to_string()
 }

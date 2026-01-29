@@ -57,6 +57,10 @@ fn main() {
                 completions::list_script_names();
                 return;
             }
+            "--list-scripts-detailed" => {
+                completions::list_script_names_detailed();
+                return;
+            }
             _ => {}
         }
     }

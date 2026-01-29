@@ -134,7 +134,15 @@ else
     fail "--completions fish: $OUTPUT"
 fi
 
-# Test 13: --completions with invalid shell
+# Test 13: --list-scripts-detailed outputs name:command pairs
+OUTPUT=$($BINARY --list-scripts-detailed 2>&1)
+if echo "$OUTPUT" | grep -q "build:echo" && echo "$OUTPUT" | grep -q "benchmark:node"; then
+    pass "--list-scripts-detailed"
+else
+    fail "--list-scripts-detailed: $OUTPUT"
+fi
+
+# Test 14: --completions with invalid shell
 OUTPUT=$($BINARY --completions powershell 2>&1) || true
 if echo "$OUTPUT" | grep -q "Unsupported shell"; then
     pass "--completions invalid shell error"
