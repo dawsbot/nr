@@ -120,7 +120,7 @@ fi
 
 # Test 11: --completions zsh
 OUTPUT=$($BINARY --completions zsh 2>&1)
-if echo "$OUTPUT" | grep -q "#compdef nr"; then
+if echo "$OUTPUT" | grep -q "compdef _nr nr"; then
     pass "--completions zsh"
 else
     fail "--completions zsh: $OUTPUT"

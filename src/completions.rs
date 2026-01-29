@@ -73,17 +73,14 @@ complete -F _nr_completions nr"#
 }
 
 fn generate_zsh() -> String {
-    r#"#compdef nr
-
-_nr() {
+    r#"_nr() {
     local -a scripts
     scripts=(${(f)"$(nr --list-scripts-detailed 2>/dev/null)"})
     if (( CURRENT == 2 )); then
         _describe 'script' scripts
     fi
 }
-
-_nr "$@""#
+compdef _nr nr"#
         .to_string()
 }
 
