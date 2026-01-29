@@ -1,3 +1,5 @@
+mod completions;
+
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
@@ -7,8 +9,8 @@ use std::path::PathBuf;
 use std::process::{exit, Command};
 
 #[derive(Deserialize)]
-struct PackageJson {
-    scripts: Option<HashMap<String, String>>,
+pub struct PackageJson {
+    pub scripts: Option<HashMap<String, String>>,
 }
 
 fn find_package_json() -> Option<PathBuf> {
@@ -24,8 +26,40 @@ fn find_package_json() -> Option<PathBuf> {
     }
 }
 
+fn print_usage() {
+    println!("nr - Run npm scripts. 28x faster.\n");
+    println!("Usage:");
+    println!("  nr                          List available scripts");
+    println!("  nr <script> [args...]       Run a script");
+    println!("  nr --completions <shell>    Generate shell completions (bash, zsh, fish)");
+    println!("  nr --help                   Show this help");
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+
+    // Handle flags before looking for package.json
+    if let Some(first) = args.first() {
+        match first.as_str() {
+            "--help" | "-h" => {
+                print_usage();
+                return;
+            }
+            "--completions" => {
+                let shell = args.get(1).unwrap_or_else(|| {
+                    eprintln!("Usage: nr --completions <bash|zsh|fish>");
+                    exit(1);
+                });
+                println!("{}", completions::generate(shell));
+                return;
+            }
+            "--list-scripts" => {
+                completions::list_script_names();
+                return;
+            }
+            _ => {}
+        }
+    }
 
     let pkg_path = match find_package_json() {
         Some(p) => p,

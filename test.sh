@@ -94,6 +94,54 @@ else
     fail "Monorepo: parent node_modules/.bin: $OUTPUT"
 fi
 
+# Test 8: --help flag
+OUTPUT=$($BINARY --help 2>&1)
+if echo "$OUTPUT" | grep -q "Run npm scripts" && echo "$OUTPUT" | grep -q "\-\-completions"; then
+    pass "--help flag"
+else
+    fail "--help flag: $OUTPUT"
+fi
+
+# Test 9: --list-scripts outputs script names
+OUTPUT=$($BINARY --list-scripts 2>&1)
+if echo "$OUTPUT" | grep -q "test" && echo "$OUTPUT" | grep -q "build"; then
+    pass "--list-scripts"
+else
+    fail "--list-scripts: $OUTPUT"
+fi
+
+# Test 10: --completions bash
+OUTPUT=$($BINARY --completions bash 2>&1)
+if echo "$OUTPUT" | grep -q "complete -F _nr_completions nr"; then
+    pass "--completions bash"
+else
+    fail "--completions bash: $OUTPUT"
+fi
+
+# Test 11: --completions zsh
+OUTPUT=$($BINARY --completions zsh 2>&1)
+if echo "$OUTPUT" | grep -q "#compdef nr"; then
+    pass "--completions zsh"
+else
+    fail "--completions zsh: $OUTPUT"
+fi
+
+# Test 12: --completions fish
+OUTPUT=$($BINARY --completions fish 2>&1)
+if echo "$OUTPUT" | grep -q "complete -c nr"; then
+    pass "--completions fish"
+else
+    fail "--completions fish: $OUTPUT"
+fi
+
+# Test 13: --completions with invalid shell
+OUTPUT=$($BINARY --completions powershell 2>&1) || true
+if echo "$OUTPUT" | grep -q "Unsupported shell"; then
+    pass "--completions invalid shell error"
+else
+    fail "--completions invalid shell error: $OUTPUT"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 

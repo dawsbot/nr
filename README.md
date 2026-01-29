@@ -96,6 +96,36 @@ Add to `.zed/settings.json` in your project:
 }
 ```
 
+## Shell Completions
+
+Tab-complete script names from your `package.json`. Completions are dynamic — they read from the nearest `package.json` every time.
+
+### Bash
+
+Add to `~/.bashrc`:
+
+```bash
+eval "$(nr --completions bash)"
+```
+
+### Zsh
+
+Add to `~/.zshrc`:
+
+```bash
+eval "$(nr --completions zsh)"
+```
+
+### Fish
+
+Run once:
+
+```fish
+nr --completions fish | source
+# To persist:
+nr --completions fish > ~/.config/fish/completions/nr.fish
+```
+
 ## Why is it faster?
 
 **No Node.js startup.** npm, yarn, and pnpm all bootstrap Node.js before doing anything. That's 50-100ms before your script even starts. `nr` is a native binary—it starts instantly.
