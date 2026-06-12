@@ -1,11 +1,15 @@
 {
   "name": "nr",
   "scripts": {
-    "test": "echo 'test passed'",
+    "test": "echo test passed",
     "test:nr": "./test.sh",
     "build": "echo 'building...'",
     "lint": "echo 'linting...'",
     "moo": "cowsay 'hello from node_modules'",
+    "moodirect": "cowsay hello-direct",
+    "argcount": "sh scripts/argcount.sh",
+    "chain": "echo first && echo second",
+    "envtest": "FOO=bar printenv FOO",
     "benchmark": "node scripts/benchmark.js"
   },
   "devDependencies": {
