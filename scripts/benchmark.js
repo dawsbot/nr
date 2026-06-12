@@ -7,7 +7,8 @@ const os = require("os");
 
 const ROOT = path.join(__dirname, "..");
 const README = path.join(ROOT, "README.md");
-const ITERATIONS = 10;
+const RUNS = 10;
+const WARMUP = 3;
 
 // Detect system info
 function getSystemInfo() {
@@ -91,33 +92,47 @@ function formatSize(bytes) {
   return `${Math.round(bytes / (1024 * 1024))}MB`;
 }
 
-// Benchmark a command
-function benchmark(cmd) {
-  const times = [];
+// Format milliseconds, with a decimal when sub-10ms differences matter
+function formatTime(ms) {
+  return ms < 10 ? `${ms.toFixed(1)}ms` : `${Math.round(ms)}ms`;
+}
 
-  for (let i = 0; i < ITERATIONS; i++) {
-    const start = performance.now();
-    try {
-      execSync(cmd, { stdio: "ignore", cwd: ROOT });
-    } catch {}
-    const end = performance.now();
-    times.push(end - start);
+// Benchmark all commands in one hyperfine run (no shell wrapper around
+// the measured commands, so fast runners aren't drowned in shell startup)
+function benchmarkAll(commands) {
+  const jsonPath = path.join(os.tmpdir(), `nr-benchmark-${process.pid}.json`);
+  const result = spawnSync(
+    "hyperfine",
+    [
+      "--shell=none",
+      "--warmup", String(WARMUP),
+      "--runs", String(RUNS),
+      "--ignore-failure",
+      "--export-json", jsonPath,
+      ...commands,
+    ],
+    { cwd: ROOT, stdio: "inherit" },
+  );
+  if (result.status !== 0) {
+    console.error("hyperfine failed");
+    process.exit(result.status ?? 1);
   }
+  const data = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+  fs.unlinkSync(jsonPath);
+  return data.results.map((r) => r.median * 1000);
+}
 
-  // Return average, excluding outliers
-  times.sort((a, b) => a - b);
-  const trimmed = times.slice(1, -1); // Remove fastest and slowest
-  const avg =
-    trimmed.length > 0
-      ? trimmed.reduce((a, b) => a + b, 0) / trimmed.length
-      : times.reduce((a, b) => a + b, 0) / times.length;
-
-  return Math.round(avg);
+if (!hasCommand("hyperfine")) {
+  console.error(
+    "hyperfine is required. Install it with: brew install hyperfine\n" +
+      "https://github.com/sharkdp/hyperfine",
+  );
+  process.exit(1);
 }
 
 console.log("Benchmarking nr...");
 console.log(`System: ${getSystemInfo()}`);
-console.log(`Iterations per runner: ${ITERATIONS}\n`);
+console.log(`Runs per runner: ${RUNS} (after ${WARMUP} warmup runs)\n`);
 
 // Ensure nr is built
 const nrBinary = path.join(
@@ -131,62 +146,37 @@ if (!fs.existsSync(nrBinary)) {
   execSync("cargo build --release", { cwd: ROOT, stdio: "inherit" });
 }
 
-// Run benchmarks
-const results = [];
+// Collect available runners
+const runners = [{ runner: "nr", cmd: `${nrBinary} test` }];
 
-// nr
-process.stdout.write("  nr: ");
-const nrTime = benchmark(`"${nrBinary}" test`);
-const nrSize = getInstallSize("nr");
-console.log(`${nrTime}ms (${formatSize(nrSize)})`);
-results.push({ runner: "nr", time: nrTime, size: nrSize });
-
-// npm
 if (hasCommand("npm")) {
-  process.stdout.write("  npm: ");
-  const npmTime = benchmark("npm run test --silent");
-  const npmSize = getInstallSize("npm");
-  console.log(`${npmTime}ms (${formatSize(npmSize)})`);
-  results.push({ runner: "npm", time: npmTime, size: npmSize });
+  runners.push({ runner: "npm", cmd: "npm run test --silent" });
 }
 
-// node --run (Node 22+)
 const nodeVersion = parseInt(process.version.slice(1).split(".")[0], 10);
 if (nodeVersion >= 22) {
-  process.stdout.write("  node --run: ");
-  const nodeRunTime = benchmark("node --run test");
-  console.log(`${nodeRunTime}ms (N/A)`);
-  results.push({ runner: "node --run", time: nodeRunTime, size: null });
+  runners.push({ runner: "node --run", cmd: "node --run test" });
 }
 
-// bun
 if (hasCommand("bun")) {
-  process.stdout.write("  bun: ");
-  const bunTime = benchmark("bun run --silent test");
-  const bunSize = getInstallSize("bun");
-  console.log(`${bunTime}ms (${formatSize(bunSize)})`);
-  results.push({ runner: "bun", time: bunTime, size: bunSize });
+  runners.push({ runner: "bun", cmd: "bun run --silent test" });
 }
 
-// yarn
 if (hasCommand("yarn")) {
-  process.stdout.write("  yarn: ");
-  const yarnTime = benchmark("yarn --silent test");
-  const yarnSize = getInstallSize("yarn");
-  console.log(`${yarnTime}ms (${formatSize(yarnSize)})`);
-  results.push({ runner: "yarn", time: yarnTime, size: yarnSize });
+  runners.push({ runner: "yarn", cmd: "yarn --silent test" });
 }
 
-// pnpm
 if (hasCommand("pnpm")) {
-  process.stdout.write("  pnpm: ");
-  const pnpmTime = benchmark("pnpm run --silent test");
-  const pnpmSize = getInstallSize("pnpm");
-  console.log(`${pnpmTime}ms (${formatSize(pnpmSize)})`);
-  results.push({ runner: "pnpm", time: pnpmTime, size: pnpmSize });
+  runners.push({ runner: "pnpm", cmd: "pnpm run --silent test" });
 }
 
-console.log("");
+// Run benchmarks
+const times = benchmarkAll(runners.map((r) => r.cmd));
+const results = runners.map(({ runner }, i) => ({
+  runner,
+  time: times[i],
+  size: runner === "node --run" ? null : getInstallSize(runner),
+}));
 
 // Sort by time and calculate speedups
 results.sort((a, b) => a.time - b.time);
@@ -200,7 +190,7 @@ const fastestSpeedup = nrResult ? Math.round(baseline / nrResult.time) : 1;
 const tableRows = results.map(({ runner, time, size }) => {
   const speedup = (baseline / time).toFixed(1);
   const speedupStr = runner === "nr" ? `**${speedup}x**` : `${speedup}x`;
-  return `| ${runner} | ${time}ms | ${speedupStr} | ${formatSize(size)} |`;
+  return `| ${runner} | ${formatTime(time)} | ${speedupStr} | ${formatSize(size)} |`;
 });
 
 const benchmarkContent = `<!-- BENCHMARK_START -->
@@ -208,7 +198,7 @@ const benchmarkContent = `<!-- BENCHMARK_START -->
 |--------|------|---------|------|
 ${tableRows.join("\n")}
 
-*Measured running \`echo test\` on ${getSystemInfo()}. Your mileage may vary.*
+*Median of ${RUNS} runs measured with [hyperfine](https://github.com/sharkdp/hyperfine) (\`--shell=none\`) running \`echo test\` on ${getSystemInfo()}. Your mileage may vary.*
 <!-- BENCHMARK_END -->`;
 
 // Update README

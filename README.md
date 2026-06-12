@@ -4,7 +4,7 @@
 
 # nr
 
-Run npm scripts. <!-- FASTEST_SPEEDUP_START -->31<!-- FASTEST_SPEEDUP_END -->x faster.
+Run npm scripts. <!-- FASTEST_SPEEDUP_START -->66<!-- FASTEST_SPEEDUP_END -->x faster.
 
 A zero-overhead npm script runner written in Rust. No Node.js startup, no npm overhead—just your script.
 
@@ -13,14 +13,14 @@ A zero-overhead npm script runner written in Rust. No Node.js startup, no npm ov
 <!-- BENCHMARK_START -->
 | Runner | Time | Speedup | Size |
 |--------|------|---------|------|
-| nr | 8ms | **30.8x** | 393KB |
-| bun | 10ms | 24.6x | 60MB |
-| node --run | 25ms | 9.8x | N/A |
-| npm | 110ms | 2.2x | 18MB |
-| yarn | 124ms | 2.0x | 5MB |
-| pnpm | 246ms | 1.0x | 19MB |
+| nr | 3.7ms | **66.4x** | 393KB |
+| bun | 7.3ms | 34.0x | 60MB |
+| node --run | 24ms | 10.2x | N/A |
+| npm | 109ms | 2.3x | 18MB |
+| yarn | 127ms | 1.9x | 5MB |
+| pnpm | 247ms | 1.0x | 19MB |
 
-*Measured running `echo test` on macOS 26.5.1 (Apple Silicon). Your mileage may vary.*
+*Median of 10 runs measured with [hyperfine](https://github.com/sharkdp/hyperfine) (`--shell=none`) running `echo test` on macOS 26.5.1 (Apple Silicon). Your mileage may vary.*
 <!-- BENCHMARK_END -->
 
 ## Install
