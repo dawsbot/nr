@@ -4,7 +4,7 @@
 
 # nr
 
-Run npm scripts. <!-- FASTEST_SPEEDUP_START -->28<!-- FASTEST_SPEEDUP_END -->x faster.
+Run npm scripts. <!-- FASTEST_SPEEDUP_START -->31<!-- FASTEST_SPEEDUP_END -->x faster.
 
 A zero-overhead npm script runner written in Rust. No Node.js startup, no npm overhead—just your script.
 
@@ -13,14 +13,14 @@ A zero-overhead npm script runner written in Rust. No Node.js startup, no npm ov
 <!-- BENCHMARK_START -->
 | Runner | Time | Speedup | Size |
 |--------|------|---------|------|
-| nr | 10ms | **27.8x** | 377KB |
-| bun | 12ms | 23.2x | 55MB |
-| node --run | 24ms | 11.6x | N/A |
-| npm | 139ms | 2.0x | 18MB |
-| yarn | 170ms | 1.6x | 5MB |
-| pnpm | 278ms | 1.0x | 19MB |
+| nr | 8ms | **30.8x** | 393KB |
+| bun | 10ms | 24.6x | 60MB |
+| node --run | 25ms | 9.8x | N/A |
+| npm | 110ms | 2.2x | 18MB |
+| yarn | 124ms | 2.0x | 5MB |
+| pnpm | 246ms | 1.0x | 19MB |
 
-*Measured running `echo test` on macOS 26.2 (Apple Silicon). Your mileage may vary.*
+*Measured running `echo test` on macOS 26.5.1 (Apple Silicon). Your mileage may vary.*
 <!-- BENCHMARK_END -->
 
 ## Install
@@ -101,6 +101,8 @@ Add to `.zed/settings.json` in your project:
 **No Node.js startup.** npm, yarn, and pnpm all bootstrap Node.js before doing anything. That's 50-100ms before your script even starts. `nr` is a native binary—it starts instantly.
 
 **Direct exec.** On Unix systems, `nr` uses the `exec()` syscall to replace itself with your command. No fork, no wait, no overhead. Your script runs in the same process slot.
+
+**No shell when none is needed.** If a script has no shell metacharacters (most don't: `vitest`, `tsc -p .`, `eslint src`), `nr` skips `/bin/sh` entirely and execs the program directly. That saves several milliseconds of shell startup, and your extra arguments arrive as real argv entries instead of being re-split by the shell.
 
 **Minimal parsing.** We only read the `scripts` field from package.json. Not dependencies, not lockfiles, not node_modules. Just scripts.
 

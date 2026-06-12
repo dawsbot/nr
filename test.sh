@@ -94,6 +94,38 @@ else
     fail "Monorepo: parent node_modules/.bin: $OUTPUT"
 fi
 
+# Test 8: Quoted extra args arrive as a single argument
+OUTPUT=$($BINARY argcount "two words" 2>&1)
+if echo "$OUTPUT" | grep -q "argc=1" && echo "$OUTPUT" | grep -q "arg:two words"; then
+    pass "Quoted extra args preserved"
+else
+    fail "Quoted extra args preserved: $OUTPUT"
+fi
+
+# Test 9: Shell operators in scripts still work
+OUTPUT=$($BINARY chain 2>&1)
+if echo "$OUTPUT" | grep -q "first" && echo "$OUTPUT" | grep -q "second"; then
+    pass "Shell operators (&&)"
+else
+    fail "Shell operators (&&): $OUTPUT"
+fi
+
+# Test 10: Leading env assignment goes through the shell
+OUTPUT=$($BINARY envtest 2>&1)
+if echo "$OUTPUT" | grep -q "bar"; then
+    pass "Env assignment prefix"
+else
+    fail "Env assignment prefix: $OUTPUT"
+fi
+
+# Test 11: node_modules/.bin resolution without shell metachars
+OUTPUT=$($BINARY moodirect 2>&1)
+if echo "$OUTPUT" | grep -q "hello-direct"; then
+    pass "node_modules/.bin via direct exec"
+else
+    fail "node_modules/.bin via direct exec: $OUTPUT"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 
