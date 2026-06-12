@@ -48,7 +48,8 @@ cargo build --release
 ./test.sh
 
 git commit -am "v$VERSION"
-git tag "v$VERSION"
+# -m makes the tag annotated, required when tag.gpgsign is enabled
+git tag -m "v$VERSION" "v$VERSION"
 git push origin main --tags
 
 echo ""
