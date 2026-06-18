@@ -6,7 +6,7 @@
 
 Run your project's tasks. <!-- FASTEST_SPEEDUP_START -->66<!-- FASTEST_SPEEDUP_END -->x faster.
 
-A zero-overhead task runner written in Rust. One command for every project. `nr <task>` detects whatever your project uses (npm scripts, a Makefile, a justfile, Cargo, pyproject, a Procfile or a Taskfile) and runs the task with no Node.js startup and no overhead.
+A zero-overhead task runner written in Rust. One command for every project. `nr <task>` detects whatever your project uses (npm scripts, a Makefile, a justfile, Cargo, pyproject, a Pipfile, a Procfile or a Taskfile) and runs the task with no Node.js startup and no overhead.
 
 ## Benchmarks
 
@@ -22,6 +22,16 @@ A zero-overhead task runner written in Rust. One command for every project. `nr 
 
 *Median of 10 runs measured with [hyperfine](https://github.com/sharkdp/hyperfine) (`--shell=none`) running `echo test` on macOS 26.5.1 (Apple Silicon). Your mileage may vary.*
 <!-- BENCHMARK_END -->
+
+The table above is `nr` versus other **npm** script runners. `nr` also replaces the **Python** launchers natively: poetry, pipenv and pdm each boot a Python interpreter on every `run`, so `nr` finds the project virtualenv and execs your task directly instead.
+
+| Launcher | Their time | `nr` | Speedup |
+|----------|-----------|------|---------|
+| `pdm run` | 570ms | 5.1ms | **~110x** |
+| `poetry run` | 561ms | 26ms | **~22x** |
+| `pipenv run` | 253ms | 5.3ms | **~47x** |
+
+*Trivial task, so the figure is launcher startup, the overhead `nr` removes. `nr` verifies identical output before timing. Reproduce with [`scripts/benchmark-python.sh`](scripts/benchmark-python.sh). poetry runs a Python console script, so `nr` still pays the ~25ms interpreter startup the script itself needs, hence the smaller multiple; pdm and pipenv shell tasks skip Python entirely. Falls back to the real launcher when no project virtualenv is found, so behavior is always correct.*
 
 ## Install
 
@@ -54,11 +64,14 @@ nr test -- --watch
 | `Makefile` | targets | `make <task>` |
 | `justfile` | recipes | `just <task>` |
 | `Cargo.toml` | conventional commands (`build`, `test`, `run`, `check`, `clippy`, `fmt`, `bench`, `doc`) | `cargo <task>` |
-| `pyproject.toml` | `[tool.pdm.scripts]`, `[tool.poetry.scripts]`, `[tool.taskipy.tasks]` | `pdm run` / `poetry run` / the shell command |
+| `pyproject.toml` | `[tool.pdm.scripts]`, `[tool.poetry.scripts]`, `[tool.taskipy.tasks]` | natively in the project virtualenv (see below) |
+| `Pipfile` | `[scripts]` | natively in the project virtualenv (see below) |
 | `Procfile` | process names | the process command, via the shell |
 | `Taskfile.yml` | the `tasks:` block | `task <task>` |
 
-For delegated tools (`make`, `just`, `cargo`, `task`, `pdm`, `poetry`), `nr` replaces itself with a single `exec` call, so it adds no measurable overhead on top of the tool you were going to run anyway. That tool does need to be installed and on your PATH.
+For delegated tools (`make`, `just`, `cargo`, `task`), `nr` replaces itself with a single `exec` call, so it adds no measurable overhead on top of the tool you were going to run anyway. That tool does need to be installed and on your PATH.
+
+For the Python launchers (`poetry`, `pdm`, `pipenv`), `nr` skips the launcher entirely: it resolves the project virtualenv (an active `$VIRTUAL_ENV`, an in-project `.venv`, or pdm's `__pypackages__`), puts its `bin/` on PATH, and execs the task directly, avoiding the Python interpreter startup those tools pay on every `run`. When no local virtualenv can be found it falls back to `poetry run` / `pdm run` / `pipenv run`, so the result is always correct.
 
 ## AI Assistant Setup
 

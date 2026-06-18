@@ -59,8 +59,31 @@ fn list(detection: &Detection) {
 /// Run a raw command line (npm script, Procfile entry, taskipy task), reusing
 /// the original zero-overhead path: exec directly when no shell is needed.
 fn run_shell(cmd: &str, dir: &Path, extra_args: &[OsString]) -> ! {
-    let path = path_with_node_bins(dir);
+    exec_command_line(cmd, dir, path_with_node_bins(dir), None, extra_args)
+}
 
+/// Run a command inside a Python virtualenv: prepend its `bin/` to PATH and
+/// export `VIRTUAL_ENV`, then exec directly. This is how `nr` replaces a
+/// `poetry run` / `pdm run` / `pipenv run` launch without paying the Python
+/// interpreter startup those tools incur.
+fn run_in_venv(cmd: &str, bin: &Path, dir: &Path, extra_args: &[OsString]) -> ! {
+    let existing = env::var_os("PATH").unwrap_or_default();
+    let mut dirs = vec![bin.to_path_buf()];
+    dirs.extend(env::split_paths(&existing));
+    let path = env::join_paths(dirs).unwrap_or(existing);
+    exec_command_line(cmd, dir, path, bin.parent(), extra_args)
+}
+
+/// Shared executor for command-line tasks: exec the program directly when it has
+/// no shell metacharacters (preserving args verbatim), otherwise hand it to the
+/// shell. `virtual_env`, when set, is exported as `VIRTUAL_ENV`.
+fn exec_command_line(
+    cmd: &str,
+    dir: &Path,
+    path: OsString,
+    virtual_env: Option<&Path>,
+    extra_args: &[OsString],
+) -> ! {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -68,12 +91,16 @@ fn run_shell(cmd: &str, dir: &Path, extra_args: &[OsString]) -> ! {
         if is_simple_command(cmd) {
             let mut parts = cmd.split_ascii_whitespace();
             let prog = parts.next().unwrap();
-            let _ = Command::new(prog)
+            let mut command = Command::new(prog);
+            command
                 .args(parts)
                 .args(extra_args)
                 .current_dir(dir)
-                .env("PATH", &path)
-                .exec();
+                .env("PATH", &path);
+            if let Some(ve) = virtual_env {
+                command.env("VIRTUAL_ENV", ve);
+            }
+            let _ = command.exec();
             // exec only returns on failure; fall through to the shell so it can
             // emit its usual diagnostics.
         }
@@ -83,12 +110,16 @@ fn run_shell(cmd: &str, dir: &Path, extra_args: &[OsString]) -> ! {
             full_cmd.push(" ");
             full_cmd.push(arg);
         }
-        let err = Command::new("sh")
+        let mut command = Command::new("sh");
+        command
             .arg("-c")
             .arg(&full_cmd)
             .current_dir(dir)
-            .env("PATH", path)
-            .exec();
+            .env("PATH", path);
+        if let Some(ve) = virtual_env {
+            command.env("VIRTUAL_ENV", ve);
+        }
+        let err = command.exec();
         eprintln!("Failed to exec: {err}");
         exit(1);
     }
@@ -100,16 +131,19 @@ fn run_shell(cmd: &str, dir: &Path, extra_args: &[OsString]) -> ! {
             full_cmd.push(" ");
             full_cmd.push(arg);
         }
-        let status = Command::new("cmd")
+        let mut command = Command::new("cmd");
+        command
             .arg("/C")
             .arg(&full_cmd)
             .current_dir(dir)
-            .env("PATH", path)
-            .status()
-            .unwrap_or_else(|e| {
-                eprintln!("Failed to run: {e}");
-                exit(1);
-            });
+            .env("PATH", path);
+        if let Some(ve) = virtual_env {
+            command.env("VIRTUAL_ENV", ve);
+        }
+        let status = command.status().unwrap_or_else(|e| {
+            eprintln!("Failed to run: {e}");
+            exit(1);
+        });
         exit(status.code().unwrap_or(1));
     }
 }
@@ -204,5 +238,21 @@ fn main() {
     match &task.run {
         RunSpec::Shell(cmd) => run_shell(cmd, &detection.dir, extra_args),
         RunSpec::Exec(argv) => run_exec(argv, &detection.dir, extra_args),
+        RunSpec::Venv {
+            command,
+            requires,
+            fallback,
+        } => {
+            // Take the venv fast path only when we found a local environment and
+            // (for poetry console scripts) the entry point actually exists in it.
+            let bin = sources::find_venv_bin(&detection.dir).filter(|bin| match requires {
+                Some(prog) => bin.join(prog).exists(),
+                None => true,
+            });
+            match bin {
+                Some(bin) => run_in_venv(command, &bin, &detection.dir, extra_args),
+                None => run_exec(fallback, &detection.dir, extra_args),
+            }
+        }
     }
 }

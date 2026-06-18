@@ -5,9 +5,12 @@
 //! task, regardless of which tool defines it. Parsing is deliberately minimal,
 //! no new dependencies, just enough to learn task *names* (and a command preview
 //! for display). Execution is delegated to the canonical tool for each source
-//! (`make`, `just`, `cargo`, `task`, `pdm`, `poetry`) so we never reimplement
-//! their build logic, and the whole thing stays a single `exec()` on the hot
-//! path.
+//! (`make`, `just`, `cargo`, `task`) so we never reimplement their build logic,
+//! and the whole thing stays a single `exec()` on the hot path. The exception is
+//! the Python launchers (`poetry`, `pdm`, `pipenv`), which bootstrap an
+//! interpreter on every `run`: for those we resolve the project virtualenv and
+//! exec the command directly (see [`RunSpec::Venv`]), falling back to the
+//! launcher only when no local environment is found.
 
 use std::collections::HashSet;
 use std::env;
@@ -24,6 +27,22 @@ pub enum RunSpec {
     /// A fixed argv prefix to exec directly; the user's extra args are appended.
     /// Used to delegate to a project tool, e.g. `["make", "build"]`.
     Exec(Vec<String>),
+    /// Run a command inside the project's Python virtualenv, skipping the
+    /// launcher's interpreter startup. When a local environment can be found
+    /// (an active `$VIRTUAL_ENV`, an in-project `.venv`, or pdm's
+    /// `__pypackages__`) we put its `bin/` on PATH and exec `command` directly.
+    /// Otherwise we fall back to `fallback` (e.g. `["poetry", "run", "lint"]`)
+    /// so behaviour stays correct even when we can't locate the env.
+    Venv {
+        command: String,
+        /// When set, the fast path is only taken if this executable exists in
+        /// the resolved virtualenv `bin/`. Poetry console scripts set this to
+        /// the script name, since they only run natively once installed;
+        /// otherwise we delegate. Plain shell commands (pdm/pipenv) leave it
+        /// `None` — they can use the venv but don't require an entry point.
+        requires: Option<String>,
+        fallback: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +52,7 @@ pub enum SourceKind {
     Just,
     Cargo,
     Python,
+    Pipenv,
     Procfile,
     Taskfile,
 }
@@ -46,6 +66,7 @@ impl SourceKind {
             SourceKind::Just => "justfile",
             SourceKind::Cargo => "Cargo.toml",
             SourceKind::Python => "pyproject.toml",
+            SourceKind::Pipenv => "Pipfile",
             SourceKind::Procfile => "Procfile",
             SourceKind::Taskfile => "Taskfile",
         }
@@ -147,6 +168,11 @@ fn collect(dir: &Path) -> (Vec<SourceKind>, Vec<Task>) {
         add(SourceKind::Python, true, parse_pyproject(&content));
     }
 
+    // Pipfile — pipenv `[scripts]`.
+    if let Some(content) = read(dir, "Pipfile") {
+        add(SourceKind::Pipenv, true, parse_pipfile(&content));
+    }
+
     // Procfile.
     if let Some(content) = read_any(dir, &["Procfile", "Procfile.dev"]) {
         add(SourceKind::Procfile, true, parse_procfile(&content));
@@ -183,6 +209,54 @@ fn read_any(dir: &Path, names: &[&str]) -> Option<String> {
 
 fn exists(dir: &Path, name: &str) -> bool {
     dir.join(name).exists()
+}
+
+// ---------------------------------------------------------------------------
+// virtualenv resolution
+// ---------------------------------------------------------------------------
+
+/// Find the `bin/` (or `Scripts/` on Windows) directory of the Python
+/// environment a task should run in. An already-activated `$VIRTUAL_ENV` wins;
+/// otherwise we look for a project-local environment. Returns `None` when no
+/// local environment exists, signalling the caller to fall back to the launcher.
+pub fn find_venv_bin(dir: &Path) -> Option<PathBuf> {
+    if let Some(active) = env::var_os("VIRTUAL_ENV") {
+        if let Some(bin) = venv_bin_dir(Path::new(&active)) {
+            return Some(bin);
+        }
+    }
+    local_venv_bin(dir)
+}
+
+/// Project-local environments only (no `$VIRTUAL_ENV` consulted): an in-project
+/// `.venv` or a pdm `__pypackages__/<version>` PEP 582 layout. Kept pure so it
+/// is deterministically testable.
+fn local_venv_bin(dir: &Path) -> Option<PathBuf> {
+    if let Some(bin) = venv_bin_dir(&dir.join(".venv")) {
+        return Some(bin);
+    }
+    if let Ok(entries) = fs::read_dir(dir.join("__pypackages__")) {
+        // `__pypackages__/3.11/bin` — take the first python version present.
+        let mut versions: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        versions.sort();
+        for v in versions {
+            if let Some(bin) = venv_bin_dir(&v) {
+                return Some(bin);
+            }
+        }
+    }
+    None
+}
+
+/// Given a virtualenv root, return its executables directory if it exists.
+fn venv_bin_dir(root: &Path) -> Option<PathBuf> {
+    for sub in ["bin", "Scripts"] {
+        let candidate = root.join(sub);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn truncate(s: &str) -> String {
@@ -346,28 +420,58 @@ fn cargo_tasks() -> Vec<Task> {
 /// Parse task tables out of pyproject.toml: pdm, poetry and taskipy. This is a
 /// deliberately tiny TOML reader that understands just enough: section headers
 /// and top-of-table `key = value` lines.
+///
+/// poetry and pdm normally bootstrap a Python interpreter on every `run`, which
+/// is exactly the overhead `nr` exists to skip. So where we can express the task
+/// as a plain command we emit a `Venv` spec (run it in the project virtualenv
+/// directly), keeping the launcher only as a fallback.
 fn parse_pyproject(content: &str) -> Vec<Task> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
 
-    // pdm: `pdm run <name>` — names come from inline keys or `[..scripts.NAME]`
-    // sub-tables.
+    // pdm: inline `name = "cmd"` scripts run directly in the venv. Sub-table
+    // forms (`[tool.pdm.scripts.name]` with `call`/`composite`/`env`) keep their
+    // pdm semantics, so those delegate to `pdm run`.
+    let pdm_inline: std::collections::HashMap<String, String> =
+        table_pairs(content, "tool.pdm.scripts")
+            .into_iter()
+            .collect();
     for name in table_keys(content, "tool.pdm.scripts") {
-        if seen.insert(name.clone()) {
-            out.push(Task {
-                detail: "pdm script".to_string(),
-                run: RunSpec::Exec(vec!["pdm".to_string(), "run".to_string(), name.clone()]),
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let fallback = vec!["pdm".to_string(), "run".to_string(), name.clone()];
+        match pdm_inline.get(&name) {
+            Some(cmd) if !cmd.is_empty() && !cmd.starts_with('{') => out.push(Task {
+                detail: truncate(cmd),
+                run: RunSpec::Venv {
+                    command: cmd.clone(),
+                    requires: None,
+                    fallback,
+                },
                 name,
                 source: SourceKind::Python,
-            });
+            }),
+            _ => out.push(Task {
+                detail: "pdm script".to_string(),
+                run: RunSpec::Exec(fallback),
+                name,
+                source: SourceKind::Python,
+            }),
         }
     }
-    // poetry: `poetry run <name>`.
+    // poetry: `[tool.poetry.scripts]` entries are console scripts installed into
+    // the venv's `bin/`, so when that wrapper exists we exec `<venv>/bin/<name>`
+    // directly; otherwise (e.g. the project isn't installed) we delegate.
     for name in table_keys(content, "tool.poetry.scripts") {
         if seen.insert(name.clone()) {
             out.push(Task {
                 detail: "poetry script".to_string(),
-                run: RunSpec::Exec(vec!["poetry".to_string(), "run".to_string(), name.clone()]),
+                run: RunSpec::Venv {
+                    command: name.clone(),
+                    requires: Some(name.clone()),
+                    fallback: vec!["poetry".to_string(), "run".to_string(), name.clone()],
+                },
                 name,
                 source: SourceKind::Python,
             });
@@ -384,6 +488,39 @@ fn parse_pyproject(content: &str) -> Vec<Task> {
                 run: RunSpec::Shell(cmd),
                 name,
                 source: SourceKind::Python,
+            });
+        }
+    }
+    out
+}
+
+/// Parse `[scripts]` from a pipenv Pipfile (TOML). String scripts run directly
+/// in the project virtualenv; the table form keeps pipenv's semantics.
+fn parse_pipfile(content: &str) -> Vec<Task> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for (name, cmd) in table_pairs(content, "scripts") {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let fallback = vec!["pipenv".to_string(), "run".to_string(), name.clone()];
+        if cmd.is_empty() || cmd.starts_with('{') {
+            out.push(Task {
+                detail: "pipenv script".to_string(),
+                run: RunSpec::Exec(fallback),
+                name,
+                source: SourceKind::Pipenv,
+            });
+        } else {
+            out.push(Task {
+                detail: truncate(&cmd),
+                run: RunSpec::Venv {
+                    command: cmd.clone(),
+                    requires: None,
+                    fallback,
+                },
+                name,
+                source: SourceKind::Pipenv,
             });
         }
     }
@@ -656,17 +793,89 @@ fmt = \"black .\"
         assert!(n.contains(&"mycli"), "poetry: {n:?}");
         assert!(n.contains(&"fmt"), "taskipy: {n:?}");
 
+        // Inline pdm command -> run in the venv directly, fall back to `pdm run`.
         let lint = tasks.iter().find(|t| t.name == "lint").unwrap();
         assert_eq!(
             lint.run,
+            RunSpec::Venv {
+                command: "ruff check .".to_string(),
+                requires: None,
+                fallback: vec!["pdm".to_string(), "run".to_string(), "lint".to_string()],
+            }
+        );
+        // Sub-table pdm script keeps pdm semantics -> delegate.
+        let serve = tasks.iter().find(|t| t.name == "serve").unwrap();
+        assert_eq!(
+            serve.run,
             RunSpec::Exec(vec![
                 "pdm".to_string(),
                 "run".to_string(),
-                "lint".to_string()
+                "serve".to_string()
             ])
         );
+        // poetry console script -> exec `<venv>/bin/mycli`, fall back to poetry.
+        let mycli = tasks.iter().find(|t| t.name == "mycli").unwrap();
+        assert_eq!(
+            mycli.run,
+            RunSpec::Venv {
+                command: "mycli".to_string(),
+                requires: Some("mycli".to_string()),
+                fallback: vec!["poetry".to_string(), "run".to_string(), "mycli".to_string()],
+            }
+        );
+        // taskipy stays a plain shell command.
         let fmt = tasks.iter().find(|t| t.name == "fmt").unwrap();
         assert_eq!(fmt.run, RunSpec::Shell("black .".to_string()));
+    }
+
+    #[test]
+    fn pipfile_scripts() {
+        let pipfile = "\
+[[source]]
+url = \"https://pypi.org/simple\"
+
+[packages]
+flask = \"*\"
+
+[scripts]
+test = \"pytest -q\"
+serve = \"flask run\"
+";
+        let tasks = parse_pipfile(pipfile);
+        assert_eq!(names(&tasks), vec!["test", "serve"]);
+        assert_eq!(
+            tasks[0].run,
+            RunSpec::Venv {
+                command: "pytest -q".to_string(),
+                requires: None,
+                fallback: vec!["pipenv".to_string(), "run".to_string(), "test".to_string()],
+            }
+        );
+        assert_eq!(tasks[0].source, SourceKind::Pipenv);
+    }
+
+    #[test]
+    fn local_venv_bin_finds_in_project_and_pypackages() {
+        // in-project .venv/bin
+        let a = std::env::temp_dir().join(format!("nr-venv-a-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&a);
+        fs::create_dir_all(a.join(".venv/bin")).unwrap();
+        assert_eq!(local_venv_bin(&a), Some(a.join(".venv/bin")));
+        let _ = fs::remove_dir_all(&a);
+
+        // pdm PEP 582 __pypackages__/<ver>/bin
+        let b = std::env::temp_dir().join(format!("nr-venv-b-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&b);
+        fs::create_dir_all(b.join("__pypackages__/3.11/bin")).unwrap();
+        assert_eq!(local_venv_bin(&b), Some(b.join("__pypackages__/3.11/bin")));
+        let _ = fs::remove_dir_all(&b);
+
+        // nothing -> None
+        let c = std::env::temp_dir().join(format!("nr-venv-c-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&c);
+        fs::create_dir_all(&c).unwrap();
+        assert_eq!(local_venv_bin(&c), None);
+        let _ = fs::remove_dir_all(&c);
     }
 
     #[test]

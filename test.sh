@@ -24,6 +24,29 @@ fail() {
 echo "Running tests..."
 echo ""
 
+# --- Python launcher preflight ---------------------------------------------
+# The poetry/pipenv/pdm tests below drive the real launchers. Make sure this
+# machine has them (uv/pipx commonly install to ~/.local/bin).
+export PATH="$HOME/.local/bin:$PATH"
+HAVE_POETRY=0; HAVE_PIPENV=0; HAVE_PDM=0
+echo "Python launchers (needed for the native-venv tests):"
+if command -v poetry >/dev/null 2>&1; then
+    HAVE_POETRY=1; printf "  ${GREEN}✓${NC} poetry (%s)\n" "$(poetry --version 2>&1 | head -1)"
+else
+    printf "  ${RED}✗${NC} poetry not found — install: uv tool install poetry\n"
+fi
+if command -v pipenv >/dev/null 2>&1; then
+    HAVE_PIPENV=1; printf "  ${GREEN}✓${NC} pipenv (%s)\n" "$(pipenv --version 2>&1 | head -1)"
+else
+    printf "  ${RED}✗${NC} pipenv not found — install: uv tool install pipenv\n"
+fi
+if command -v pdm >/dev/null 2>&1; then
+    HAVE_PDM=1; printf "  ${GREEN}✓${NC} pdm (%s)\n" "$(pdm --version 2>&1 | head -1)"
+else
+    printf "  ${RED}✗${NC} pdm not found — install: uv tool install pdm\n"
+fi
+echo ""
+
 # Test 1: Basic script execution
 OUTPUT=$($BINARY test 2>&1)
 if echo "$OUTPUT" | grep -q "test passed"; then
@@ -177,6 +200,130 @@ if echo "$OUTPUT" | grep -q "Cargo.toml" && echo "$OUTPUT" | grep -q "clippy"; t
     pass "Cargo.toml conventional commands"
 else
     fail "Cargo.toml conventional commands: $OUTPUT"
+fi
+
+# Test 16: pdm inline script runs natively in the in-project .venv
+PDM_TMP=$(mktemp -d)
+python3 -m venv "$PDM_TMP/.venv" >/dev/null 2>&1
+printf '[project]\nname = "x"\nversion = "0.1.0"\n\n[tool.pdm.scripts]\nbench = "echo nr-pdm-native"\n' > "$PDM_TMP/pyproject.toml"
+OUTPUT=$(cd "$PDM_TMP" && env -u VIRTUAL_ENV "$BIN_ABS" bench 2>&1) || true
+rm -rf "$PDM_TMP"
+if echo "$OUTPUT" | grep -q "nr-pdm-native"; then
+    pass "pdm inline script runs in venv"
+else
+    fail "pdm inline script runs in venv: $OUTPUT"
+fi
+
+# Test 17: pipenv Pipfile [scripts] runs natively in the in-project .venv
+PIPENV_TMP=$(mktemp -d)
+python3 -m venv "$PIPENV_TMP/.venv" >/dev/null 2>&1
+printf '[scripts]\nbench = "echo nr-pipenv-native"\n' > "$PIPENV_TMP/Pipfile"
+OUTPUT=$(cd "$PIPENV_TMP" && env -u VIRTUAL_ENV "$BIN_ABS" bench 2>&1) || true
+rm -rf "$PIPENV_TMP"
+if echo "$OUTPUT" | grep -q "nr-pipenv-native"; then
+    pass "pipenv script runs in venv"
+else
+    fail "pipenv script runs in venv: $OUTPUT"
+fi
+
+# Test 18: poetry console script execs the venv wrapper when it exists
+POETRY_TMP=$(mktemp -d)
+mkdir -p "$POETRY_TMP/.venv/bin"
+printf '#!/bin/sh\necho nr-poetry-native\n' > "$POETRY_TMP/.venv/bin/greet"
+chmod +x "$POETRY_TMP/.venv/bin/greet"
+printf '[tool.poetry]\nname = "x"\n\n[tool.poetry.scripts]\ngreet = "x:main"\n' > "$POETRY_TMP/pyproject.toml"
+OUTPUT=$(cd "$POETRY_TMP" && env -u VIRTUAL_ENV "$BIN_ABS" greet 2>&1) || true
+rm -rf "$POETRY_TMP"
+if echo "$OUTPUT" | grep -q "nr-poetry-native"; then
+    pass "poetry script execs venv wrapper"
+else
+    fail "poetry script execs venv wrapper: $OUTPUT"
+fi
+
+# Test 19: poetry script with no wrapper present falls back to the launcher
+POETRY_TMP2=$(mktemp -d)
+printf '[tool.poetry]\nname = "x"\n\n[tool.poetry.scripts]\ngreet = "x:main"\n' > "$POETRY_TMP2/pyproject.toml"
+OUTPUT=$(cd "$POETRY_TMP2" && env -u VIRTUAL_ENV "$BIN_ABS" greet 2>&1) || true
+rm -rf "$POETRY_TMP2"
+# With no virtualenv, nr must delegate to `poetry run` rather than try to exec
+# the bare name (which would be a "greet: command not found" from the shell).
+if echo "$OUTPUT" | grep -qi "poetry" && ! echo "$OUTPUT" | grep -q "sh: greet"; then
+    pass "poetry falls back to launcher without a venv"
+else
+    fail "poetry falls back to launcher without a venv: $OUTPUT"
+fi
+
+# Test 20: nr matches `pdm run` output (real launcher, when installed)
+if [ "$HAVE_PDM" = "1" ]; then
+    REAL_TMP=$(mktemp -d)
+    python3 -m venv "$REAL_TMP/.venv" >/dev/null 2>&1
+    printf '[project]\nname = "x"\nversion = "0.1.0"\nrequires-python = ">=3.9"\n\n[tool.pdm.scripts]\ngreet = "echo equiv-pdm"\n' > "$REAL_TMP/pyproject.toml"
+    (cd "$REAL_TMP" && pdm use -f .venv/bin/python >/dev/null 2>&1) || true
+    REAL=$(cd "$REAL_TMP" && pdm run greet 2>/dev/null | tail -1)
+    MINE=$(cd "$REAL_TMP" && env -u VIRTUAL_ENV "$BIN_ABS" greet 2>/dev/null | tail -1)
+    rm -rf "$REAL_TMP"
+    if [ "$REAL" = "equiv-pdm" ] && [ "$MINE" = "$REAL" ]; then
+        pass "nr matches 'pdm run' output ($MINE)"
+    else
+        fail "nr matches 'pdm run' output: pdm='$REAL' nr='$MINE'"
+    fi
+else
+    echo "(skipping pdm equivalence test: pdm not installed)"
+fi
+
+# Test 21: nr matches `pipenv run` output (real launcher, when installed)
+if [ "$HAVE_PIPENV" = "1" ]; then
+    REAL_TMP=$(mktemp -d)
+    printf '[[source]]\nurl = "https://pypi.org/simple"\nname = "pypi"\n\n[scripts]\ngreet = "echo equiv-pipenv"\n' > "$REAL_TMP/Pipfile"
+    (cd "$REAL_TMP" && PIPENV_VENV_IN_PROJECT=1 pipenv install >/dev/null 2>&1) || true
+    REAL=$(cd "$REAL_TMP" && PIPENV_VENV_IN_PROJECT=1 pipenv run greet 2>/dev/null | tail -1)
+    MINE=$(cd "$REAL_TMP" && env -u VIRTUAL_ENV "$BIN_ABS" greet 2>/dev/null | tail -1)
+    rm -rf "$REAL_TMP"
+    if [ "$REAL" = "equiv-pipenv" ] && [ "$MINE" = "$REAL" ]; then
+        pass "nr matches 'pipenv run' output ($MINE)"
+    else
+        fail "nr matches 'pipenv run' output: pipenv='$REAL' nr='$MINE'"
+    fi
+else
+    echo "(skipping pipenv equivalence test: pipenv not installed)"
+fi
+
+# Test 22: nr matches `poetry run` output (real launcher, when installed)
+if [ "$HAVE_POETRY" = "1" ]; then
+    REAL_TMP=$(mktemp -d)
+    mkdir -p "$REAL_TMP/proj"
+    printf 'def main():\n    print("equiv-poetry")\n' > "$REAL_TMP/proj/__init__.py"
+    cat > "$REAL_TMP/pyproject.toml" <<EOF
+[tool.poetry]
+name = "proj"
+version = "0.1.0"
+description = ""
+authors = ["x <x@example.com>"]
+packages = [{ include = "proj" }]
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+
+[tool.poetry.scripts]
+greet = "proj:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+EOF
+    (cd "$REAL_TMP" && python3 -m venv .venv >/dev/null 2>&1 \
+        && poetry env use .venv/bin/python >/dev/null 2>&1 \
+        && .venv/bin/pip install . >/dev/null 2>&1) || true
+    REAL=$(cd "$REAL_TMP" && poetry run greet 2>/dev/null | tail -1)
+    MINE=$(cd "$REAL_TMP" && env -u VIRTUAL_ENV "$BIN_ABS" greet 2>/dev/null | tail -1)
+    rm -rf "$REAL_TMP"
+    if [ "$REAL" = "equiv-poetry" ] && [ "$MINE" = "$REAL" ]; then
+        pass "nr matches 'poetry run' output ($MINE)"
+    else
+        fail "nr matches 'poetry run' output: poetry='$REAL' nr='$MINE'"
+    fi
+else
+    echo "(skipping poetry equivalence test: poetry not installed)"
 fi
 
 echo ""
