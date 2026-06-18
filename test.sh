@@ -2,6 +2,7 @@
 set -e
 
 BINARY="./target/release/nr"
+BIN_ABS="$PWD/target/release/nr"
 PASS=0
 FAIL=0
 
@@ -47,12 +48,12 @@ else
     fail "Script not found error: $OUTPUT"
 fi
 
-# Test 4: List scripts (no args)
+# Test 4: List tasks (no args)
 OUTPUT=$($BINARY 2>&1)
-if echo "$OUTPUT" | grep -q "Scripts available"; then
-    pass "List scripts"
+if echo "$OUTPUT" | grep -q "Run a task"; then
+    pass "List tasks"
 else
-    fail "List scripts: $OUTPUT"
+    fail "List tasks: $OUTPUT"
 fi
 
 # Test 5: Extra args passthrough
@@ -63,12 +64,14 @@ else
     fail "Extra args passthrough: $OUTPUT"
 fi
 
-# Test 6: No package.json (run from /tmp)
-OUTPUT=$(cd /tmp && $OLDPWD/$BINARY test 2>&1) || true
-if echo "$OUTPUT" | grep -q "No package.json"; then
-    pass "No package.json error"
+# Test 6: No manifest at all (run from an empty temp dir)
+EMPTY_TMP=$(mktemp -d)
+OUTPUT=$(cd "$EMPTY_TMP" && "$BIN_ABS" test 2>&1) || true
+rmdir "$EMPTY_TMP"
+if echo "$OUTPUT" | grep -q "No tasks found"; then
+    pass "No manifest error"
 else
-    fail "No package.json error: $OUTPUT"
+    fail "No manifest error: $OUTPUT"
 fi
 
 # Test 7: Monorepo - binaries in parent node_modules/.bin
@@ -124,6 +127,56 @@ if echo "$OUTPUT" | grep -q "hello-direct"; then
     pass "node_modules/.bin via direct exec"
 else
     fail "node_modules/.bin via direct exec: $OUTPUT"
+fi
+
+# Test 12: Procfile task execution (no external tool required)
+PROC_TMP=$(mktemp -d)
+printf 'web: echo procfile-web-up\nworker: echo worker-up\n' > "$PROC_TMP/Procfile"
+OUTPUT=$(cd "$PROC_TMP" && "$BIN_ABS" web 2>&1) || true
+rm -rf "$PROC_TMP"
+if echo "$OUTPUT" | grep -q "procfile-web-up"; then
+    pass "Procfile task execution"
+else
+    fail "Procfile task execution: $OUTPUT"
+fi
+
+# Test 13: Makefile target delegation (requires make, near-universal)
+if command -v make >/dev/null 2>&1; then
+    MAKE_TMP=$(mktemp -d)
+    printf 'greet:\n\t@echo makefile-target-ran\n' > "$MAKE_TMP/Makefile"
+    OUTPUT=$(cd "$MAKE_TMP" && "$BIN_ABS" greet 2>&1) || true
+    rm -rf "$MAKE_TMP"
+    if echo "$OUTPUT" | grep -q "makefile-target-ran"; then
+        pass "Makefile target delegation"
+    else
+        fail "Makefile target delegation: $OUTPUT"
+    fi
+else
+    echo "(skipping Makefile test: make not installed)"
+fi
+
+# Test 14: Multiple sources merged in one listing
+MULTI_TMP=$(mktemp -d)
+echo '{"scripts":{"start":"node ."}}' > "$MULTI_TMP/package.json"
+printf 'web: echo hi\n' > "$MULTI_TMP/Procfile"
+OUTPUT=$(cd "$MULTI_TMP" && "$BIN_ABS" 2>&1) || true
+rm -rf "$MULTI_TMP"
+if echo "$OUTPUT" | grep -q "package.json" && echo "$OUTPUT" | grep -q "Procfile" \
+   && echo "$OUTPUT" | grep -q "start" && echo "$OUTPUT" | grep -q "web"; then
+    pass "Multiple sources merged in listing"
+else
+    fail "Multiple sources merged in listing: $OUTPUT"
+fi
+
+# Test 15: Cargo.toml exposes conventional commands
+CARGO_TMP=$(mktemp -d)
+printf '[package]\nname = "x"\nversion = "0.1.0"\n' > "$CARGO_TMP/Cargo.toml"
+OUTPUT=$(cd "$CARGO_TMP" && "$BIN_ABS" 2>&1) || true
+rm -rf "$CARGO_TMP"
+if echo "$OUTPUT" | grep -q "Cargo.toml" && echo "$OUTPUT" | grep -q "clippy"; then
+    pass "Cargo.toml conventional commands"
+else
+    fail "Cargo.toml conventional commands: $OUTPUT"
 fi
 
 echo ""

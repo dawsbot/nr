@@ -4,9 +4,9 @@
 
 # nr
 
-Run npm scripts. <!-- FASTEST_SPEEDUP_START -->66<!-- FASTEST_SPEEDUP_END -->x faster.
+Run your project's tasks. <!-- FASTEST_SPEEDUP_START -->66<!-- FASTEST_SPEEDUP_END -->x faster.
 
-A zero-overhead npm script runner written in Rust. No Node.js startup, no npm overhead—just your script.
+A zero-overhead task runner written in Rust. One command for every project. `nr <task>` detects whatever your project uses (npm scripts, a Makefile, a justfile, Cargo, pyproject, a Procfile or a Taskfile) and runs the task with no Node.js startup and no overhead.
 
 ## Benchmarks
 
@@ -34,15 +34,31 @@ Works on macOS, Linux, and Windows (via Git Bash/WSL).
 ## Usage
 
 ```bash
-# List available scripts
+# List every task nr can find in this project
 nr
 
-# Run a script
+# Run a task by name
 nr build
 
-# Pass arguments to the script
+# Pass arguments through to the task
 nr test -- --watch
 ```
+
+## Task sources
+
+`nr` walks up from your current directory to the nearest folder containing a recognized manifest, then merges every task it finds. If several manifests live side by side, all of their tasks are listed and `package.json` wins any name collision.
+
+| Manifest | Tasks come from | How `nr <task>` runs it |
+|----------|-----------------|-------------------------|
+| `package.json` | the `scripts` field | direct `exec`, with `node_modules/.bin` on PATH |
+| `Makefile` | targets | `make <task>` |
+| `justfile` | recipes | `just <task>` |
+| `Cargo.toml` | conventional commands (`build`, `test`, `run`, `check`, `clippy`, `fmt`, `bench`, `doc`) | `cargo <task>` |
+| `pyproject.toml` | `[tool.pdm.scripts]`, `[tool.poetry.scripts]`, `[tool.taskipy.tasks]` | `pdm run` / `poetry run` / the shell command |
+| `Procfile` | process names | the process command, via the shell |
+| `Taskfile.yml` | the `tasks:` block | `task <task>` |
+
+For delegated tools (`make`, `just`, `cargo`, `task`, `pdm`, `poetry`), `nr` replaces itself with a single `exec` call, so it adds no measurable overhead on top of the tool you were going to run anyway. That tool does need to be installed and on your PATH.
 
 ## AI Assistant Setup
 
