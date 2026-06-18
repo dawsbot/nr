@@ -28,7 +28,7 @@ echo ""
 # The poetry/pipenv/pdm tests below drive the real launchers. Make sure this
 # machine has them (uv/pipx commonly install to ~/.local/bin).
 export PATH="$HOME/.local/bin:$PATH"
-HAVE_POETRY=0; HAVE_PIPENV=0; HAVE_PDM=0
+HAVE_POETRY=0; HAVE_PIPENV=0; HAVE_PDM=0; HAVE_UV=0
 echo "Python launchers (needed for the native-venv tests):"
 if command -v poetry >/dev/null 2>&1; then
     HAVE_POETRY=1; printf "  ${GREEN}✓${NC} poetry (%s)\n" "$(poetry --version 2>&1 | head -1)"
@@ -44,6 +44,11 @@ if command -v pdm >/dev/null 2>&1; then
     HAVE_PDM=1; printf "  ${GREEN}✓${NC} pdm (%s)\n" "$(pdm --version 2>&1 | head -1)"
 else
     printf "  ${RED}✗${NC} pdm not found — install: uv tool install pdm\n"
+fi
+if command -v uv >/dev/null 2>&1; then
+    HAVE_UV=1; printf "  ${GREEN}✓${NC} uv (%s)\n" "$(uv --version 2>&1 | head -1)"
+else
+    printf "  ${RED}✗${NC} uv not found — install: https://docs.astral.sh/uv/\n"
 fi
 echo ""
 
@@ -324,6 +329,37 @@ EOF
     fi
 else
     echo "(skipping poetry equivalence test: poetry not installed)"
+fi
+
+# Test 23: nr matches `uv run` output for a uv project (delegates to uv run)
+if [ "$HAVE_UV" = "1" ]; then
+    REAL_TMP=$(mktemp -d)
+    mkdir -p "$REAL_TMP/src/proj"
+    printf 'def main():\n    print("equiv-uv")\n' > "$REAL_TMP/src/proj/__init__.py"
+    cat > "$REAL_TMP/pyproject.toml" <<EOF
+[project]
+name = "proj"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[project.scripts]
+greet = "proj:main"
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+EOF
+    (cd "$REAL_TMP" && uv sync >/dev/null 2>&1) || true
+    REAL=$(cd "$REAL_TMP" && uv run greet 2>/dev/null | tail -1)
+    MINE=$(cd "$REAL_TMP" && env -u VIRTUAL_ENV "$BIN_ABS" greet 2>/dev/null | tail -1)
+    rm -rf "$REAL_TMP"
+    if [ "$REAL" = "equiv-uv" ] && [ "$MINE" = "$REAL" ]; then
+        pass "nr matches 'uv run' output ($MINE)"
+    else
+        fail "nr matches 'uv run' output: uv='$REAL' nr='$MINE'"
+    fi
+else
+    echo "(skipping uv equivalence test: uv not installed)"
 fi
 
 echo ""

@@ -5,12 +5,13 @@
 //! task, regardless of which tool defines it. Parsing is deliberately minimal,
 //! no new dependencies, just enough to learn task *names* (and a command preview
 //! for display). Execution is delegated to the canonical tool for each source
-//! (`make`, `just`, `cargo`, `task`) so we never reimplement their build logic,
-//! and the whole thing stays a single `exec()` on the hot path. The exception is
-//! the Python launchers (`poetry`, `pdm`, `pipenv`), which bootstrap an
-//! interpreter on every `run`: for those we resolve the project virtualenv and
-//! exec the command directly (see [`RunSpec::Venv`]), falling back to the
-//! launcher only when no local environment is found.
+//! (`make`, `just`, `cargo`, `task`, `uv` — all already native and fast) so we
+//! never reimplement their build logic, and the whole thing stays a single
+//! `exec()` on the hot path. The exception is the Python launchers (`poetry`,
+//! `pdm`, `pipenv`), which bootstrap an interpreter on every `run`: for those we
+//! resolve the project virtualenv and exec the command directly (see
+//! [`RunSpec::Venv`]), falling back to the launcher only when no local
+//! environment is found.
 
 use std::collections::HashSet;
 use std::env;
@@ -53,6 +54,7 @@ pub enum SourceKind {
     Cargo,
     Python,
     Pipenv,
+    Uv,
     Procfile,
     Taskfile,
 }
@@ -67,6 +69,7 @@ impl SourceKind {
             SourceKind::Cargo => "Cargo.toml",
             SourceKind::Python => "pyproject.toml",
             SourceKind::Pipenv => "Pipfile",
+            SourceKind::Uv => "uv",
             SourceKind::Procfile => "Procfile",
             SourceKind::Taskfile => "Taskfile",
         }
@@ -166,6 +169,13 @@ fn collect(dir: &Path) -> (Vec<SourceKind>, Vec<Task>) {
     // pyproject.toml — pdm / poetry / taskipy task tables.
     if let Some(content) = read(dir, "pyproject.toml") {
         add(SourceKind::Python, true, parse_pyproject(&content));
+        // uv is native Rust and already fast, so (unlike the Python launchers)
+        // there's no interpreter startup to skip — we just delegate to `uv run`,
+        // which also keeps uv's environment sync. A `uv.lock` marks the project
+        // as uv-managed so `uv run` is the right launcher.
+        if exists(dir, "uv.lock") {
+            add(SourceKind::Uv, true, parse_uv(&content));
+        }
     }
 
     // Pipfile — pipenv `[scripts]`.
@@ -527,6 +537,25 @@ fn parse_pipfile(content: &str) -> Vec<Task> {
     out
 }
 
+/// Parse `[project.scripts]` console scripts from a uv-managed project. uv is
+/// native and fast, so we delegate to `uv run <name>` rather than try to beat
+/// it; that keeps uv's environment sync intact.
+fn parse_uv(content: &str) -> Vec<Task> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for name in table_keys(content, "project.scripts") {
+        if seen.insert(name.clone()) {
+            out.push(Task {
+                detail: "uv run".to_string(),
+                run: RunSpec::Exec(vec!["uv".to_string(), "run".to_string(), name.clone()]),
+                name,
+                source: SourceKind::Uv,
+            });
+        }
+    }
+    out
+}
+
 /// Names defined under a TOML table `prefix`: both inline keys directly under
 /// `[prefix]` and the first segment of any `[prefix.NAME...]` sub-table.
 fn table_keys(content: &str, prefix: &str) -> Vec<String> {
@@ -852,6 +881,60 @@ serve = \"flask run\"
             }
         );
         assert_eq!(tasks[0].source, SourceKind::Pipenv);
+    }
+
+    #[test]
+    fn uv_project_scripts_delegate_to_uv_run() {
+        let toml = "\
+[project]
+name = \"demo\"
+version = \"0.1.0\"
+
+[project.scripts]
+greet = \"demo:main\"
+serve = \"demo.web:run\"
+";
+        let tasks = parse_uv(toml);
+        assert_eq!(names(&tasks), vec!["greet", "serve"]);
+        assert_eq!(
+            tasks[0].run,
+            RunSpec::Exec(vec![
+                "uv".to_string(),
+                "run".to_string(),
+                "greet".to_string()
+            ])
+        );
+        assert_eq!(tasks[0].source, SourceKind::Uv);
+    }
+
+    #[test]
+    fn uv_scripts_only_surface_when_uv_lock_present() {
+        let dir = std::env::temp_dir().join(format!("nr-uv-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let pyproject = "[project]\nname = \"x\"\nversion = \"0.1.0\"\n\n[project.scripts]\ngreet = \"x:main\"\n";
+        fs::write(dir.join("pyproject.toml"), pyproject).unwrap();
+
+        // Without uv.lock, the project isn't treated as uv-managed.
+        let d1 = detect_from(&dir).unwrap();
+        assert!(!d1.manifests.contains(&SourceKind::Uv));
+        assert!(d1.find("greet").is_none());
+
+        // With uv.lock, `greet` is delegated to `uv run`.
+        fs::write(dir.join("uv.lock"), "version = 1\n").unwrap();
+        let d2 = detect_from(&dir).unwrap();
+        assert!(d2.manifests.contains(&SourceKind::Uv));
+        let greet = d2.find("greet").unwrap();
+        assert_eq!(
+            greet.run,
+            RunSpec::Exec(vec![
+                "uv".to_string(),
+                "run".to_string(),
+                "greet".to_string()
+            ])
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
