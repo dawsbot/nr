@@ -188,6 +188,16 @@ fn run_exec(argv: &[String], dir: &Path, extra_args: &[OsString]) -> ! {
 fn main() {
     let args: Vec<OsString> = env::args_os().skip(1).collect();
 
+    // `--version` works anywhere, even outside a project, so handle it before
+    // looking for tasks.
+    if matches!(
+        args.first().and_then(|a| a.to_str()),
+        Some("--version" | "-V")
+    ) {
+        println!("nr {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     let detection = match sources::detect() {
         Some(d) => d,
         None => {

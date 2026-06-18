@@ -362,6 +362,17 @@ else
     echo "(skipping uv equivalence test: uv not installed)"
 fi
 
+# Test 24: --version / -V print the version, and work outside a project
+VER_TMP=$(mktemp -d)
+OUTPUT=$(cd "$VER_TMP" && "$BIN_ABS" --version 2>&1)
+OUTPUT_SHORT=$(cd "$VER_TMP" && "$BIN_ABS" -V 2>&1)
+rmdir "$VER_TMP"
+if echo "$OUTPUT" | grep -qE '^nr [0-9]+\.[0-9]+\.[0-9]+' && [ "$OUTPUT" = "$OUTPUT_SHORT" ]; then
+    pass "--version prints version ($OUTPUT)"
+else
+    fail "--version prints version: '$OUTPUT' / '$OUTPUT_SHORT'"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 
