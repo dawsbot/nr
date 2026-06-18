@@ -31,9 +31,7 @@ The table above is `nr` versus other **npm** script runners. `nr` also replaces 
 | `poetry run` | 561ms | 26ms | **~22x** |
 | `pipenv run` | 253ms | 5.3ms | **~47x** |
 
-*Trivial task, so the figure is launcher startup, the overhead `nr` removes. `nr` verifies identical output before timing. Reproduce with [`scripts/benchmark-python.sh`](scripts/benchmark-python.sh). poetry runs a Python console script, so `nr` still pays the ~25ms interpreter startup the script itself needs, hence the smaller multiple; pdm and pipenv shell tasks skip Python entirely. Falls back to the real launcher when no project virtualenv is found, so behavior is always correct.*
-
-**What about [uv](https://docs.astral.sh/uv/)?** uv is native Rust and already about as fast as `nr` (`uv run` is ~12–40ms, versus hundreds for the launchers above), so there's no interpreter bootstrap to skip and no honest speedup to claim. `nr` detects uv projects (via `uv.lock`) and runs their `[project.scripts]` through `uv run`, keeping uv's environment sync. It's there for one command across every project, not for speed. Same reasoning is why `nr` delegates to `make`, `cargo`, `just` and `task` rather than reimplementing them.
+**What about [uv](https://docs.astral.sh/uv/)?** It's already native and fast, so `nr` just delegates to `uv run` (detecting uv projects via `uv.lock`) for one command across every project, not for speed.
 
 ## Install
 
